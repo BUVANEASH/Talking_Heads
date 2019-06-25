@@ -1,3 +1,15 @@
+**/__pycache__/
+**/data/
+**/results/
+**/build/
+**/html/
+**.bat
+**Makefile
+
+# modle files
+**.dat
+**.h5
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

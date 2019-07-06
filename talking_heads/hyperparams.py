@@ -1,63 +1,113 @@
 # -*- coding: utf-8 -*-
 #/usr/bin/python3
 
-import tensorflow as tf
+import os
+import re
+from ast import literal_eval
 
-Hyperparams = tf.contrib.training.HParams(
-        
+class hyperparameters():
+
+    def __init__(self):        
         # Dataset
-        dataset = "/media/new_hdd1/VoxCeleb-2/Video/dev/mp4",
+        self.dataset = "/media/new_hdd1/VoxCeleb-2/Video/dev/mp4"
+        
+        # logdir
+        self.model = "fine"
+        self.modeldir = "../results/model/"
+        self.logdir = os.path.join(self.modeldir, "meta")
+        self.fine_logdir = os.path.join(self.modeldir, self.model)
                
         # No of training videos
-        train_videos = 145569,
+        self.train_videos = 145569
         
         # Network Architecture parameters
         # Encoder channels and self-attention channel
-        enc_down_ch = [64,128,256,512],
-        enc_self_att_ch = 256,
+        self.enc_down_ch = [64,128,256,512]
+        self.enc_self_att_ch = 256
         
         # Decoder channels and self-attention channel
-        dec_down_ch = [256,128,64,3],
-        dec_self_att_ch = 64,
+        self.dec_down_ch = [256,128,64,3]
+        self.dec_self_att_ch = 64
         
         # Residual Block channel
-        res_blk_ch = 512,
+        self.res_blk_ch = 512
         
         # Embedding Vector
-        N_Vec = 512,
+        self.N_Vec = 512
         
         # Considering input and output channel in a residual block, multiple of 2 because beta and gamma affine parameter.
-        split_lens = [512]*11*2 + [256]*2*2 + [128]*2*2 + [64]*2*2 + [3]*2,
+        self.split_lens = [self.res_blk_ch]*11*2 + \
+                            [self.dec_down_ch[0]]*2*2 + \
+                            [self.dec_down_ch[1]]*2*2 + \
+                            [self.dec_down_ch[2]]*2*2 + \
+                            [self.dec_down_ch[3]]*2
         
         # Activation outputs from VGGFace and VGG19
-        vggface_feat_layers = ['conv1_1','conv2_1','conv2_1','conv3_1','conv5_1'],
-        vgg19_feat_layers = ['block1_conv1','block2_conv1','block3_conv1','block4_conv1','block5_conv1'],
+        self.vggface_feat_layers = ['conv1_1','conv2_1','conv3_1','conv4_1','conv5_1']
+        self.vgg19_feat_layers = ['block1_conv1','block2_conv1','block3_conv1','block4_conv1','block5_conv1']
         
         # Training hyperparameters
         # Image Size
-        img_size = (224, 224, 3),
+        self.img_size = (224, 224, 3)
         
         # K-shot learning,
-        K = 8,
+        self.K = 8
         
         # Loss weights
-        loss_vgg19_wt =  1e-2,
-        loss_vggface_wt = 2e-3,
-        loss_fm_wt = 1e1,
-        loss_mch_wt = 8e1,
-        learning_rate_EG = 5e-5,
-        learning_rate_D = 2e-4,
-        epochs = 100
-	
-)
+        self.loss_vgg19_wt =  1e-2
+        self.loss_vggface_wt = 2e-3
+        self.loss_fm_wt = 1e1
+        self.loss_mch_wt = 8e1
+        self.learning_rate_EG = 5e-5
+        self.learning_rate_D = 2e-4
+        self.epoch = 100
+        
+        # Logging
+        self.log_step = 10
+        self.save_step = 1000
+        self.summary_step = 100
+        
+        # hyperparams json and resourceconfig json
+        self.hp_json = "/opt/ml/input/config/hyperparameters.json"
+        self.resource_json = "/opt/ml/input/config/resourceConfig.json"
+        
+    def update(self,newdata):
+        for key,value in newdata.items():
+            setattr(self,key,value)
+            
+Hyperparams = hyperparameters()
 
-def hparams_debug_string():
-    """
-    Gives hyperparameters as string
+def hp_json(hp_json):
+    '''Overrides hyperparams from hyperparameters.json'''
+    print("READING ",Hyperparams.hp_json)
+    with open(hp_json) as f:
+        text = f.read()
+        str_dict = re.sub(r"\"(-?\d+(?:[\.,]\d+)?)\"", r'\1', text)
+        str_dict = str_dict.replace("\"True\"","True").replace("\"False\"","False")
+        return literal_eval(str_dict)
 
-    Returns:
-        Hyperparameters
-    """
-    values = Hyperparams.values()
-    hp = ['  %s: %s' % (name, values[name]) for name in sorted(values)]
-    return 'Hyperparameters:\n' + '\n'.join(hp)
+def resource_json(resource_json):
+    '''Overrides hyperparams from resourceConfig.json'''
+    print("READING ",Hyperparams.resource_json)
+    with open(resource_json) as f:
+        text = f.read()
+        str_dict = re.sub(r"\"(-?\d+(?:[\.,]\d+)?)\"", r'\1', text)
+        str_dict = str_dict.replace("\"True\"","True").replace("\"False\"","False")
+        return literal_eval(str_dict)
+
+if os.path.exists(Hyperparams.hp_json):
+    Hyperparams.update(hp_json(Hyperparams.hp_json))
+else:
+    Hyperparams.hp_json = 'hyperparameters.json'
+    if os.path.exists(Hyperparams.hp_json):
+        Hyperparams.update(hp_json(Hyperparams.hp_json))
+        
+if os.path.exists(Hyperparams.resource_json):
+    Hyperparams.update(resource_json(Hyperparams.hp_json))
+else:
+    Hyperparams.resource_json = 'resourceConfig.json'
+    if os.path.exists(Hyperparams.resource_json):
+        Hyperparams.update(resource_json(Hyperparams.hp_json))
+
+Hyperparams.logdir = os.path.join(Hyperparams.modeldir, "meta")        
+Hyperparams.fine_logdir = os.path.join(Hyperparams.modeldir, Hyperparams.model)

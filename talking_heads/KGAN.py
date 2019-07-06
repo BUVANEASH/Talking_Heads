@@ -36,9 +36,9 @@ class KGAN():
         
         # logdir
         self.model = model
-        self.modeldir = "../results/model/"
+        self.modeldir = "/opt/ml/model/"
         self.logdir = os.path.join(self.modeldir, "meta")
-        self.fine_logdir = os.path.join(self.modeldir, model)
+        self.fine_logdir = os.path.join(self.modeldir, self.model)
                
         # No of training videos
         self.train_videos = 145569
@@ -59,10 +59,14 @@ class KGAN():
         self.N_Vec = 512
         
         # Considering input and output channel in a residual block, multiple of 2 because beta and gamma affine parameter.
-        self.split_lens = [512]*11*2 + [256]*2*2 + [128]*2*2 + [64]*2*2 + [3]*2
+        self.split_lens = [self.res_blk_ch]*11*2 + \
+                            [self.dec_down_ch[0]]*2*2 + \
+                            [self.dec_down_ch[1]]*2*2 + \
+                            [self.dec_down_ch[2]]*2*2 + \
+                            [self.dec_down_ch[3]]*2
         
         # Activation outputs from VGGFace and VGG19
-        self.vggface_feat_layers = ['conv1_1','conv2_1','conv2_1','conv3_1','conv5_1']
+        self.vggface_feat_layers = ['conv1_1','conv2_1','conv3_1','conv4_1','conv5_1']
         self.vgg19_feat_layers = ['block1_conv1','block2_conv1','block3_conv1','block4_conv1','block5_conv1']
         
         # Training hyperparameters
@@ -322,6 +326,8 @@ class KGAN():
                 tf.summary.scalar("loss_MCH", self.loss_MCH)
             tf.summary.scalar("loss_EG", self.loss_EG)
             tf.summary.scalar("loss_DSC", self.loss_DSC)
+            tf.summary.scalar("loss_r_x_hat", self.r_x_hat)
+            tf.summary.scalar("loss_r_x", self.r_x)
             
             # Embedder & Generator Optimization
             EG_var_list = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 'embedder') + \
@@ -371,34 +377,34 @@ class KGAN():
         
         tf.logging.set_verbosity(tf.logging.INFO)
         
-        self.load()
+        self.load(self.logdir)
             
         self.writer = tf.summary.FileWriter(self.logdir, self.sess.graph)
         
         if not self.fine_tune:
             video_list = get_video_list(self.dataset)            
-            for ep in self.epoch:                
+            for ep in range(self.epoch):                
                 print("Epoch {0}/{1}".format(ep,self.epoch))                                
                 idx = [i for i in range(0, len(video_list)-1)]
                 random.shuffle(idx)                
                 for v_id in idx:                    
                     vid_id = np.array(v_id).reshape(-1)
                     x, y, tx, ty = get_video_data(video_list[v_id])                    
-                    if None in [x,y,tx,ty]:
+                    if any([elem is None for elem in [x,y,tx,ty]]):
                         continue                    
                     feeddict = {self.x:x,self.y:y,self.tx:tx,self.ty:ty,self.idx:vid_id}                    
-                    self.training(feeddict)
+                    self.training_operation(feeddict)
         else:            
-            for ep in self.epoch:                
+            for ep in range(self.epoch):                
                 random.shuffle(self.frames)                
                 for f in self.frames:                    
                     x, y, tx, ty = get_frame_data(f)                   
                     feeddict = {self.x:x,self.y:y,self.tx:tx,self.ty:ty}                    
-                    self.training(feeddict)
+                    self.training_operation(feeddict)
                     
         print("Training Completed..")
     
-    def training(self, feeddict):
+    def training_operation(self, feeddict):
         start_time = datetime.datetime.now()                    
         loss_dsc, _ = self.sess.run([self.loss_DSC, 
                                      self.train_D],
@@ -416,15 +422,18 @@ class KGAN():
                             datetime.datetime.now(),gs,loss_eg,loss_dsc,(1/duration.total_seconds()),duration.total_seconds())                                                          
         # Write checkpoint files at every 1k steps
         if gs % self.save_step == 0:
-            self.save(gs)                        
+            if not self.fine_tune:
+                self.save(self.logdir,gs)
+            else:
+                self.save(self.fine_logdir,gs)                        
         if gs % self.summary_step == 0:
             self.writer.add_summary(summary, gs)
     
-    def save(self, gs):
-        self.saver.save(self.sess, os.path.join(self.logdir, 'model.ckpt'), global_step=gs)
+    def save(self, logdir, gs):
+        self.saver.save(self.sess, os.path.join(logdir, 'model.ckpt'), global_step=gs)
         tf.logging.info('Saving ckeckpoint at step %d',gs)
     
-    def load(self):
+    def load(self, logdir):
         
         self.sess.run(tf.global_variables_initializer())
         
@@ -439,7 +448,7 @@ class KGAN():
         
         self.saver = tf.train.Saver(var_list)
         
-        lastCheckpoint = tf.train.latest_checkpoint(self.logdir) 
+        lastCheckpoint = tf.train.latest_checkpoint(logdir) 
         if lastCheckpoint is None:
             print("No checkpoint available.")
             pass
@@ -451,55 +460,16 @@ class KGAN():
     def inference(self, ty, x = None, y = None):
                 
         if not self.fine_tune:
+            self.load(self.logdir)
             feeddict = {self.x:x,self.y:y,self.ty:ty}
         else:
+            self.load(self.fine_logdir)
             feeddict = {self.ty:ty}
             
         frames = self.sess.run([self.x_hat], feed_dict=feeddict)
             
         return frames
     
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
+    def update(self,newdata):
+        for key,value in newdata.items():
+            setattr(self,key,value)

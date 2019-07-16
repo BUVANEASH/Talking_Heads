@@ -330,8 +330,9 @@ class KGAN():
             tf.summary.scalar("loss_r_x", self.r_x)
             
             # Embedder & Generator Optimization
-            EG_var_list = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 'embedder') + \
-                        tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 'generator')
+            EG_var_list = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 'generator')
+            if not self.fine_tune:
+                EG_var_list += tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 'embedder')
             self.grads_EG = self.optimizer_EG.compute_gradients(self.loss_EG, var_list = EG_var_list)            
             ## gradient clipping
             self.clipped_EG = [(tf.clip_by_value(grad, -1., 1.) if not grad ==None else grad, var) for grad,var in self.grads_EG]
@@ -347,8 +348,8 @@ class KGAN():
             
             tf.summary.image('Generator/in/y', self.ty)
             tf.summary.image('Generator/out/x_hat', self.x_hat)
-            tf.summary.image('Embedder/y', tf.expand_dims(self.y[np.random.randint(0,self.K)], axis=0))
-            tf.summary.image('Embedder/x', tf.expand_dims(self.x[np.random.randint(0,self.K)], axis=0))
+            tf.summary.image('Embedder/y', tf.expand_dims(self.y[5], axis=0))
+            tf.summary.image('Embedder/x', tf.expand_dims(self.x[5], axis=0))
             
             # Summary
             self.merged = tf.summary.merge_all()

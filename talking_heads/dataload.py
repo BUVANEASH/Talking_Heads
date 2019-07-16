@@ -176,30 +176,28 @@ def data(fine_tune = False):
     video_list = get_video_list(hp.dataset)
     idx = [i for i in range(0, len(video_list)-1)]
     random.shuffle(idx)
-    
-    with tf.device('/cpu:0'):
-    
-        def generator():            
-            for vid_id in idx:            
-                x, y, tx, ty = get_video_data(video_list[vid_id])
-                if None in [x,y,tx,ty]:
-                    continue
-                yield np.int32(np.array(vid_id).reshape(-1)), np.float32(x), np.float32(y), np.float32(tx), np.float32(ty)
         
-        output_types_  = (tf.int32,tf.float32,tf.float32,tf.float32,tf.float32)
-        output_shapes_ = (tf.TensorShape([1,]),
-                          tf.TensorShape([None] + list(hp.img_size)),
-                          tf.TensorShape([None] + list(hp.img_size)),
-                          tf.TensorShape([None] + list(hp.img_size)),
-                          tf.TensorShape([None] + list(hp.img_size)))
+    def generator():            
+        for vid_id in idx:            
+            x, y, tx, ty = get_video_data(video_list[vid_id])
+            if None in [x,y,tx,ty]:
+                continue
+            yield np.int32(np.array(vid_id).reshape(-1)), np.float32(x), np.float32(y), np.float32(tx), np.float32(ty)
     
-        dataset = tf.data.Dataset.from_generator(generator,
-                                           output_types= output_types_, 
-                                           output_shapes= output_shapes_)
-        dataset = dataset.apply(tf.data.experimental.ignore_errors())
-        dataset = dataset.repeat()
-        dataset = dataset.batch(1)
-        iterator = dataset.make_one_shot_iterator()
-        next_batch = iterator.get_next()
+    output_types_  = (tf.int32,tf.float32,tf.float32,tf.float32,tf.float32)
+    output_shapes_ = (tf.TensorShape([1,]),
+                      tf.TensorShape([None] + list(hp.img_size)),
+                      tf.TensorShape([None] + list(hp.img_size)),
+                      tf.TensorShape([None] + list(hp.img_size)),
+                      tf.TensorShape([None] + list(hp.img_size)))
+
+    dataset = tf.data.Dataset.from_generator(generator,
+                                       output_types= output_types_, 
+                                       output_shapes= output_shapes_)
+    dataset = dataset.apply(tf.data.experimental.ignore_errors())
+    dataset = dataset.repeat()
+    dataset = dataset.batch(1)
+    iterator = dataset.make_one_shot_iterator()
+    next_batch = iterator.get_next()
     
     return next_batch

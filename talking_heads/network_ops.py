@@ -221,10 +221,10 @@ def resblock_up(x_init, channels, use_bias=True, is_training=True, sn=False, sco
             x = deconv(x, channels, kernel=3, stride=1, use_bias=use_bias, sn=sn)
 
         with tf.variable_scope('skip') :
-            x_init = deconv(x_init, channels, kernel=3, stride=2, use_bias=use_bias, sn=sn)
+            x_skip = deconv(x_init, channels, kernel=3, stride=2, use_bias=use_bias, sn=sn)
 
 
-    return x + x_init
+    return x + x_skip
 
 def resblock_up_condition(x_init, conds, channels, use_bias=True, is_training=True, sn=False, scope='resblock_up'):
     with tf.variable_scope(scope):
@@ -239,10 +239,10 @@ def resblock_up_condition(x_init, conds, channels, use_bias=True, is_training=Tr
             x = deconv(x, channels, kernel=3, stride=1, use_bias=use_bias, sn=sn)
 
         with tf.variable_scope('skip') :
-            x_init = deconv(x_init, channels, kernel=3, stride=2, use_bias=use_bias, sn=sn)
+            x_skip = deconv(x_init, channels, kernel=3, stride=2, use_bias=use_bias, sn=sn)
 
 
-    return x + x_init
+    return x + x_skip
 
 
 def resblock_down(x_init, channels, use_bias=True, is_training=True, sn=False, scope='resblock_down'):
@@ -258,10 +258,26 @@ def resblock_down(x_init, channels, use_bias=True, is_training=True, sn=False, s
             x = conv(x, channels, kernel=3, stride=1, pad=1, use_bias=use_bias, sn=sn)
 
         with tf.variable_scope('skip') :
-            x_init = conv(x_init, channels, kernel=3, stride=2, pad=1, use_bias=use_bias, sn=sn)
+            x_skip = conv(x_init, channels, kernel=3, stride=2, pad=1, use_bias=use_bias, sn=sn)
 
 
-    return x + x_init
+    return x + x_skip
+
+def resblock_down_no_instance_norm(x_init, channels, use_bias=True, is_training=True, sn=False, scope='resblock_down'):
+    with tf.variable_scope(scope):
+        with tf.variable_scope('res1'):
+            x = relu(x_init)
+            x = conv(x, channels, kernel=3, stride=2, pad=1, use_bias=use_bias, sn=sn)
+
+        with tf.variable_scope('res2') :
+            x = relu(x)
+            x = conv(x, channels, kernel=3, stride=1, pad=1, use_bias=use_bias, sn=sn)
+
+        with tf.variable_scope('skip') :
+            x_skip = conv(x_init, channels, kernel=3, stride=2, pad=1, use_bias=use_bias, sn=sn)
+
+
+    return x + x_skip
 
 def self_attention(x, channels, sn=False, scope='self_attention'):
     with tf.variable_scope(scope):
@@ -345,6 +361,9 @@ def relu(x):
 
 def tanh(x):
     return tf.tanh(x)
+
+def sigmoid(x):
+    return tf.nn.sigmoid(x)
 
 ##################################################################################
 # Normalization function

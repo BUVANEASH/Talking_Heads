@@ -11,10 +11,11 @@ import numpy as np
 import random
 import tensorflow as tf
 from keras_vggface.vggface import VGGFace
-from utils import learning_rate_decay
+from keras_vggface.utils import preprocess_tf_input
+from utils import learning_rate_decay, preprocess_input
 from network_ops import weight_init, weight_regularizer
-from network_ops import resblock_down, resblock, resblock_condition, resblock_up_condition, self_attention_2
-from network_ops import fully_connected, global_sum_pooling, relu, tanh
+from network_ops import resblock_down, resblock_down_no_instance_norm, resblock, resblock_condition, resblock_up_condition, self_attention
+from network_ops import fully_connected, global_sum_pooling, relu, tanh, sigmoid
 from dataload import get_frame_data, get_video_list, get_video_data
 
 class KGAN():
@@ -71,7 +72,7 @@ class KGAN():
         
         # Training hyperparameters
         # Image Size
-        self.img_size = (224, 224, 3)
+        self.img_size = (256, 256, 3)
         
         # K-shot learning,
         self.K = 8
@@ -83,7 +84,7 @@ class KGAN():
         self.loss_mch_wt = 8e1
         self.learning_rate_EG = 5e-5
         self.learning_rate_D = 2e-4
-        self.epoch = 100
+        self.num_iterations = 10000000
         
         # Logging
         self.log_step = 10
@@ -93,23 +94,34 @@ class KGAN():
     def Embedder(self, x, y, sn=True, reuse=False):
 	    
         with tf.variable_scope("embedder", reuse=reuse):
-                c = tf.concat([x,y], axis=-1)
-                e_rd1 = resblock_down(c, channels=self.enc_down_ch[0], use_bias=True, is_training=self.training, sn=sn, scope='resblock_down_1')
-                e_rd2 = resblock_down(e_rd1, channels=self.enc_down_ch[1], use_bias=True, is_training=self.training, sn=sn, scope='resblock_down_2')
-                e_rd3 = resblock_down(e_rd2, channels=self.enc_down_ch[2], use_bias=True, is_training=self.training, sn=sn, scope='resblock_down_3')
-                e_s1 = self_attention_2(e_rd3, channels=self.enc_self_att_ch, sn=sn, scope='self_attention')
-                e_rd4 = resblock_down(e_s1, channels=self.enc_down_ch[3], use_bias=True, is_training=self.training, sn=sn, scope='resblock_down_4')
-                #e = resblock_down(e, channels=self.enc_down_ch[3], use_bias=True, is_training=is_training, sn=sn, scope='resblock_down_5')
-                
-                es = global_sum_pooling(e_rd4)
-                er = relu(es)
-                e =  tf.reduce_sum(er, axis=0, keepdims=True)
-                
-                psi_hat = fully_connected(tf.expand_dims(tf.reduce_mean(e,axis=0),axis=0), 
-                                      units=sum(self.split_lens) ,
-                                      use_bias=True, is_training=self.training, sn=sn, scope='P')
-                
-                return tf.squeeze(e), tf.squeeze(psi_hat)
+            
+            xr = tf.image.resize_image_with_crop_or_pad(x, 256, 256) # out 256*256*3
+            yr = tf.image.resize_image_with_crop_or_pad(y, 256, 256) # out 256*256*3
+            
+            c = tf.concat([xr,yr], axis=-1) # out 256*256*6
+            
+            e_rd1 = resblock_down_no_instance_norm(c, channels=self.enc_down_ch[0], use_bias=False, is_training=self.training, sn=sn, scope='resblock_down_1') # out 128*128*64
+            e_rd2 = resblock_down_no_instance_norm(e_rd1, channels=self.enc_down_ch[1], use_bias=False, is_training=self.training, sn=sn, scope='resblock_down_2') # out 64*64*128
+            e_rd3 = resblock_down_no_instance_norm(e_rd2, channels=self.enc_down_ch[2], use_bias=False, is_training=self.training, sn=sn, scope='resblock_down_3') # out 32*32*256
+            e_s1 = self_attention(e_rd3, channels=self.enc_self_att_ch, sn=sn, scope='self_attention') # out 32*32*256
+            e_rd4 = resblock_down_no_instance_norm(e_s1, channels=self.enc_down_ch[3], use_bias=False, is_training=self.training, sn=sn, scope='resblock_down_4') # out 16*16*512
+            e_rd5 = resblock_down_no_instance_norm(e_rd4, channels=self.enc_down_ch[3], use_bias=False, is_training=self.training, sn=sn, scope='resblock_down_5') # out 8*8*512
+            e_rd6 = resblock_down_no_instance_norm(e_rd5, channels=self.enc_down_ch[3], use_bias=False, is_training=self.training, sn=sn, scope='resblock_down_6') # out 4*4*512
+            
+            es = global_sum_pooling(e_rd6)
+            er = relu(es)
+
+            ef = fully_connected(er, units=self.N_Vec,
+                                      use_bias=False, is_training=self.training,
+                                      sn=sn, scope='fully_connected_embedder_N_vector')
+
+            e =  tf.expand_dims(tf.reduce_mean(ef,axis=0),axis=0)
+            
+            psi_hat = fully_connected(e, units=sum(self.split_lens),
+                                      use_bias=False, is_training=self.training, 
+                                      sn=False, scope='Projection_matrix')
+            
+            return tf.squeeze(e), tf.squeeze(psi_hat)
             
     def Generator(self,y, psi_Pe=None, psi_hat_init = None, sn=True, reuse=False):        
             
@@ -118,25 +130,30 @@ class KGAN():
                 
                 z_splits = tf.split(z, num_or_size_splits=self.split_lens)
                 
-                x_rd1 = resblock_down(y, channels=self.enc_down_ch[0], use_bias=True, is_training=self.training, sn=sn, scope='resblock_down_1')
-                x_rd2 = resblock_down(x_rd1, channels=self.enc_down_ch[1], use_bias=True, is_training=self.training, sn=sn, scope='resblock_down_2')
-                x_rd3 = resblock_down(x_rd2, channels=self.enc_down_ch[2], use_bias=True, is_training=self.training, sn=sn, scope='resblock_down_3')
-                x_s1 = self_attention_2(x_rd3, channels=self.enc_self_att_ch, sn=sn, scope='self_attention_down')
-                x_rd4 = resblock_down(x_s1, channels=self.enc_down_ch[3], use_bias=True, is_training=self.training, sn=sn, scope='resblock_down_4')
+                yr = tf.image.resize_image_with_crop_or_pad(y, 256, 256) # out 256*256*3
+                x_rd1 = resblock_down(yr, channels=self.enc_down_ch[0], use_bias=False, is_training=self.training, sn=sn, scope='resblock_down_1') # out 128*128*64
+                x_rd2 = resblock_down(x_rd1, channels=self.enc_down_ch[1], use_bias=False, is_training=self.training, sn=sn, scope='resblock_down_2') # out 64*64*128
+                x_rd3 = resblock_down(x_rd2, channels=self.enc_down_ch[2], use_bias=False, is_training=self.training, sn=sn, scope='resblock_down_3') # out 32*32*256
+                x_s1 = self_attention(x_rd3, channels=self.enc_self_att_ch, sn=sn, scope='self_attention_down') # out 32*32*256
+                x_rd4 = resblock_down(x_s1, channels=self.enc_down_ch[3], use_bias=False, is_training=self.training, sn=sn, scope='resblock_down_4') # out 16*16*512
+                x_rd5 = resblock_down(x_rd4, channels=self.enc_down_ch[3], use_bias=False, is_training=self.training, sn=sn, scope='resblock_down_5') # out 8*8*512
+                x_rd6 = resblock_down(x_rd5, channels=self.enc_down_ch[3], use_bias=False, is_training=self.training, sn=sn, scope='resblock_down_6') # out 4*4*512
                 
-                x_r1 = resblock_condition(x_rd4, z_splits[:4], channels=self.res_blk_ch, use_bias=True, is_training=self.training, sn=sn, scope='resblock_1')
-                x_r2 = resblock_condition(x_r1, z_splits[4:8], channels=self.res_blk_ch, use_bias=True, is_training=self.training, sn=sn, scope='resblock_2')
-                x_r3 = resblock_condition(x_r2, z_splits[8:12], channels=self.res_blk_ch, use_bias=True, is_training=self.training, sn=sn, scope='resblock_3')
-                x_r4 = resblock_condition(x_r3, z_splits[12:16], channels=self.res_blk_ch, use_bias=True, is_training=self.training, sn=sn, scope='resblock_4')
-                x_r5 = resblock_condition(x_r4, z_splits[16:20], channels=self.res_blk_ch, use_bias=True, is_training=self.training, sn=sn, scope='resblock_5')
+                x_r1 = resblock_condition(x_rd6, z_splits[:4], channels=self.res_blk_ch, use_bias=False, is_training=self.training, sn=sn, scope='resblock_1') # out 4*4*512
+                x_r2 = resblock_condition(x_r1, z_splits[4:8], channels=self.res_blk_ch, use_bias=False, is_training=self.training, sn=sn, scope='resblock_2') # out 4*4*512
+                x_r3 = resblock_condition(x_r2, z_splits[8:12], channels=self.res_blk_ch, use_bias=False, is_training=self.training, sn=sn, scope='resblock_3') # out 4*4*512
+                x_r4 = resblock_condition(x_r3, z_splits[12:16], channels=self.res_blk_ch, use_bias=False, is_training=self.training, sn=sn, scope='resblock_4') # out 4*4*512
+                x_r5 = resblock_condition(x_r4, z_splits[16:20], channels=self.res_blk_ch, use_bias=False, is_training=self.training, sn=sn, scope='resblock_5') # out 4*4*512
                 
-                x_ru1 = resblock_up_condition(x_r5, z_splits[20:24], channels=self.dec_down_ch[0], use_bias=True, is_training=self.training, sn=sn, scope='resblock_up_1')
-                x_ru2 = resblock_up_condition(x_ru1, z_splits[24:28], channels=self.dec_down_ch[1], use_bias=True, is_training=self.training, sn=sn, scope='resblock_up_2')
-                x_ru3 = resblock_up_condition(x_ru2, z_splits[28:32], channels=self.dec_down_ch[2], use_bias=True, is_training=self.training, sn=sn, scope='resblock_up_3')
-                x_s2 = self_attention_2(x_ru3, channels=self.dec_self_att_ch, sn=sn, scope='self_attention_up')
-                x_ru4 = resblock_up_condition(x_s2, z_splits[32:36], channels=self.dec_down_ch[3], use_bias=True, is_training=self.training, sn=sn, scope='resblock_up_4')
+                x_ru1 = resblock_up_condition(x_r5, z_splits[20:24], channels=self.res_blk_ch, use_bias=False, is_training=self.training, sn=sn, scope='resblock_up_1') # out 8*8*512
+                x_ru2 = resblock_up_condition(x_ru1, z_splits[24:28], channels=self.res_blk_ch, use_bias=False, is_training=self.training, sn=sn, scope='resblock_up_2') # out 16*16*512
+                x_ru3 = resblock_up_condition(x_ru2, z_splits[28:32], channels=self.dec_down_ch[0], use_bias=False, is_training=self.training, sn=sn, scope='resblock_up_3') # out 32*32*256
+                x_s2 = self_attention(x_ru3, channels=self.dec_self_att_ch, sn=sn, scope='self_attention_up') # out 32*32*256
+                x_ru4 = resblock_up_condition(x_s2, z_splits[32:36], channels=self.dec_down_ch[1], use_bias=False, is_training=self.training, sn=sn, scope='resblock_up_4') # out 64*64*128
+                x_ru5 = resblock_up_condition(x_ru4, z_splits[36:40], channels=self.dec_down_ch[2], use_bias=False, is_training=self.training, sn=sn, scope='resblock_up_5') # out 128*128*64
+                x_ru6 = resblock_up_condition(x_ru5, z_splits[40:44], channels=self.dec_down_ch[3], use_bias=False, is_training=self.training, sn=sn, scope='resblock_up_6') # out 256*256*3
                 
-                x = tanh(x_ru4)
+                x = tanh(x_ru6)
                 
                 return x
             
@@ -160,19 +177,29 @@ class KGAN():
     
         def Discriminator_Net(x,y):
             with tf.variable_scope("discriminator_ConvNet", reuse=reuse):
-                c = tf.concat([x,y], axis=-1)
-                o0 = resblock_down(c, channels=self.enc_down_ch[0], use_bias=True, is_training=self.training, sn=sn, scope='resblock_down_1')
-                o1 = resblock_down(o0, channels=self.enc_down_ch[1], use_bias=True, is_training=self.training, sn=sn, scope='resblock_down_2')
-                o2 = resblock_down(o1, channels=self.enc_down_ch[2], use_bias=True, is_training=self.training, sn=sn, scope='resblock_down_3')
-                o3 = self_attention_2(o2, channels=self.enc_self_att_ch, sn=sn, scope='self_attention')
-                o4 = resblock_down(o3, channels=self.enc_down_ch[3], use_bias=True, is_training=self.training, sn=sn, scope='resblock_down_4')
-                #o5 = resblock_down(o4, channels=self.enc_down_ch[3], use_bias=True, is_training=is_training, sn=sn, scope='resblock_down_5')
+                
+                xr = tf.image.resize_image_with_crop_or_pad(x, 256, 256) # out 256*256*3
+                yr = tf.image.resize_image_with_crop_or_pad(y, 256, 256) # out 256*256*3
+                c = tf.concat([xr,yr], axis=-1) # out 256*256*6
+                
+                o0 = resblock_down_no_instance_norm(c, channels=self.enc_down_ch[0], use_bias=False, is_training=self.training, sn=sn, scope='resblock_down_1') # out 128*128*64
+                o1 = resblock_down_no_instance_norm(o0, channels=self.enc_down_ch[1], use_bias=False, is_training=self.training, sn=sn, scope='resblock_down_2') # out 64*64*128
+                o2 = resblock_down_no_instance_norm(o1, channels=self.enc_down_ch[2], use_bias=False, is_training=self.training, sn=sn, scope='resblock_down_3') # out 32*32*256
+                o3 = self_attention(o2, channels=self.enc_self_att_ch, sn=sn, scope='self_attention') # out 32*32*256
+                o4 = resblock_down_no_instance_norm(o3, channels=self.enc_down_ch[3], use_bias=False, is_training=self.training, sn=sn, scope='resblock_down_4') # out 16*16*512
+                o5 = resblock_down_no_instance_norm(o4, channels=self.enc_down_ch[3], use_bias=False, is_training=self.training, sn=sn, scope='resblock_down_5') # out 8*8*512
+                o6 = resblock_down_no_instance_norm(o5, channels=self.enc_down_ch[3], use_bias=False, is_training=self.training, sn=sn, scope='resblock_down_6') # out 4*4*512
                             
-                orb = resblock(o4, channels=self.N_Vec, kernel=4, pads=[2,1], use_bias=True, is_training=self.training, sn=sn, scope='resblock')
+                orb = resblock(o6, channels=self.N_Vec, kernel=4, pads=[2,1], use_bias=False, is_training=self.training, sn=sn, scope='resblock') # out 4*4*512
                 
                 ogs = global_sum_pooling(orb)
-                o = relu(ogs)
-                return o, [o0,o1,o2,o3,o4] #,o5]
+                orelu = relu(ogs)
+
+                o = fully_connected(orelu, units=self.N_Vec,
+                                      use_bias=False, is_training=self.training, 
+                                      sn=sn, scope='fully_connected_discriminator_N_vector')
+                
+                return o, [o0,o1,o2,o3,o4,o5,o6]
                        
         with tf.variable_scope("discriminator", reuse=reuse):
             
@@ -247,7 +274,7 @@ class KGAN():
         return tf.reduce_mean(tf.abs(W_i - e_hat)) * self.loss_mch_wt
          
     def loss_dsc(self, r_x, r_x_hat):
-        return (1 + r_x_hat) + (1 - r_x)
+        return tf.math.maximum(0.0, (1 + r_x_hat)) + tf.math.maximum(0.0, (1 - r_x))
     
     
     def build(self):
@@ -336,7 +363,7 @@ class KGAN():
             self.grads_EG = self.optimizer_EG.compute_gradients(self.loss_EG, var_list = EG_var_list)            
             ## gradient clipping
             self.clipped_EG = [(tf.clip_by_value(grad, -1., 1.) if not grad ==None else grad, var) for grad,var in self.grads_EG]
-            self.train_EG = self.optimizer_EG.apply_gradients(self.clipped_EG, global_step=self.global_step)
+            self.train_EG = self.optimizer_EG.apply_gradients(self.clipped_EG) #, global_step=self.global_step)
             
             # Discriminator Optimization
             D_var_list = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 'discriminator')            
@@ -344,12 +371,14 @@ class KGAN():
             ## gradient clipping
             self.clipped_D = [(tf.clip_by_value(grad, -1., 1.)  if not grad ==None else grad,var) for grad,var in self.grads_D]
             # Updating Global step only during EG optimization as two optimization happens during trainig, so second incrementation of global step.
-            self.train_D = self.optimizer_D.apply_gradients(self.clipped_D) #, global_step=self.global_step) 
-            
-            tf.summary.image('Generator/in/y', self.ty)
-            tf.summary.image('Generator/out/x_hat', self.x_hat)
-            tf.summary.image('Embedder/y', tf.expand_dims(self.y[5], axis=0))
-            tf.summary.image('Embedder/x', tf.expand_dims(self.x[5], axis=0))
+            self.train_D = self.optimizer_D.apply_gradients(self.clipped_D) #, global_step=self.global_step)
+
+            # Global step increment
+            self.global_step_increment =  tf.assign_add(self.global_step, 1, name = "global_step_increment")
+
+            tf.summary.image('Generator/1/x', self.tx)
+            tf.summary.image('Generator/2/y', self.ty)
+            tf.summary.image('Generator/3/x_hat', self.x_hat)
             
             # Summary
             self.merged = tf.summary.merge_all()
@@ -372,7 +401,6 @@ class KGAN():
                 # Generator
                 # Generate frame using landmarks from frame t    
                 self.x_hat = self.Generator(self.ty, psi_Pe=None, psi_hat_init = None, sn=True, reuse=False)
-
     
     def train(self):
         
@@ -384,8 +412,8 @@ class KGAN():
         
         if not self.fine_tune:
             video_list = get_video_list(self.dataset)            
-            for ep in range(self.epoch):                
-                print("Epoch {0}/{1}".format(ep,self.epoch))                                
+            while 1:                
+                print("shuffling Dataset.....")                                
                 idx = [i for i in range(0, len(video_list)-1)]
                 random.shuffle(idx)                
                 for v_id in idx:                    
@@ -394,14 +422,18 @@ class KGAN():
                     if any([elem is None for elem in [x,y,tx,ty]]):
                         continue                    
                     feeddict = {self.x:x,self.y:y,self.tx:tx,self.ty:ty,self.idx:vid_id}                    
-                    self.training_operation(feeddict)
+                    gs = self.training_operation(feeddict)
+                    if gs > self.num_iterations: break
+                if gs > self.num_iterations: break
         else:            
-            for ep in range(self.epoch):                
+            while 1:                
                 random.shuffle(self.frames)                
                 for f in self.frames:                    
                     x, y, tx, ty = get_frame_data(f)                   
                     feeddict = {self.x:x,self.y:y,self.tx:tx,self.ty:ty}                    
-                    self.training_operation(feeddict)
+                    gs = self.training_operation(feeddict)
+                    if gs > self.num_iterations: break
+                if gs > self.num_iterations: break
                     
         print("Training Completed..")
     
@@ -415,7 +447,7 @@ class KGAN():
                                     feed_dict=feeddict)
         duration = datetime.datetime.now() - start_time
         
-        summary, gs = self.sess.run([self.merged, self.global_step],
+        summary, gs = self.sess.run([self.merged, self.global_step_increment],
                                     feed_dict=feeddict)
         
         if gs % self.log_step == 0:
@@ -429,6 +461,8 @@ class KGAN():
                 self.save(self.fine_logdir,gs)                        
         if gs % self.summary_step == 0:
             self.writer.add_summary(summary, gs)
+
+        return gs
     
     def save(self, logdir, gs):
         self.saver.save(self.sess, os.path.join(logdir, 'model.ckpt'), global_step=gs)

@@ -10,6 +10,7 @@ class hyperparameters():
     def __init__(self):        
         # Dataset
         self.dataset = "/media/new_hdd1/VoxCeleb-2/Video/dev/mp4"
+        self.data = "../data/preprocessed/"
         
         # logdir
         self.model = "fine"
@@ -27,7 +28,7 @@ class hyperparameters():
         
         # Decoder channels and self-attention channel
         self.dec_down_ch = [256,128,64,3]
-        self.dec_self_att_ch = 64
+        self.dec_self_att_ch = 256
         
         # Residual Block channel
         self.res_blk_ch = 512
@@ -37,6 +38,8 @@ class hyperparameters():
         
         # Considering input and output channel in a residual block, multiple of 2 because beta and gamma affine parameter.
         self.split_lens = [self.res_blk_ch]*11*2 + \
+                            [self.res_blk_ch]*2*2 + \
+                            [self.res_blk_ch]*2*2 + \
                             [self.dec_down_ch[0]]*2*2 + \
                             [self.dec_down_ch[1]]*2*2 + \
                             [self.dec_down_ch[2]]*2*2 + \
@@ -48,7 +51,7 @@ class hyperparameters():
         
         # Training hyperparameters
         # Image Size
-        self.img_size = (224, 224, 3)
+        self.img_size = (256, 256, 3)
         
         # K-shot learning,
         self.K = 8
@@ -60,7 +63,7 @@ class hyperparameters():
         self.loss_mch_wt = 8e1
         self.learning_rate_EG = 5e-5
         self.learning_rate_D = 2e-4
-        self.epoch = 100
+        self.num_iterations = 10000000
         
         # Logging
         self.log_step = 10

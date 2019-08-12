@@ -13,9 +13,15 @@ import random
 import numpy as np
 import tensorflow as tf
 from tqdm import tqdm
+import skimage.io as io
+import pandas as pd
 from imutils import face_utils
-from utils import detector, predictor, preprocess_input
 from hyperparams import Hyperparams as hp
+from face_alignment import FaceAlignment, LandmarksType
+from utils import detector, predictor, preprocess_input
+
+global face_alignment
+face_alignment = FaceAlignment(LandmarksType._2D, device=device)
 
 def get_video_list(source = hp.dataset):
     """
@@ -53,15 +59,13 @@ def extract_frames(video):
     cap = cv2.VideoCapture(video)
 
     n_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-    frames = np.empty((n_frames, h, w, 3), np.dtype('uint8'))
+    frames = np.empty((n_frames, hp.img_size[0], hp.img_size[1], 3), np.dtype('uint8'))
 
     fn, ret = 0, True
     while fn < n_frames and ret:
         ret, img = cap.read()
-        frames[fn] = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        frames[fn] = cv2.cvtColor(cv2.resize(img,hp.img_size[:2]), cv2.COLOR_BGR2RGB)
         fn += 1
 
     cap.release()
@@ -101,7 +105,8 @@ def plot_landmarks(frame):
     """
     data = np.ones_like(frame)*255
     
-    landmarks = get_dlib(frame)
+    #landmarks = get_dlib(frame)
+    landmarks = face_alignment.get_landmarks_from_image(frame)[0]
     
     # Head
     cv2.polylines(data,[landmarks[:17, :]],False,(0,255,0),2)        
@@ -116,7 +121,7 @@ def plot_landmarks(frame):
     cv2.polylines(data,[landmarks[42:48, :]],True,(255,0,0), 2)
     # Mouth
     cv2.polylines(data,[landmarks[48:60, :]],True,(127.5,0,255), 2)
-    #cv2.polylines(data,[landmarks[60:, :]],True,(127.5,0,255), 1)
+    cv2.polylines(data,[landmarks[60:, :]],True,(127.5,0,255), 1)
     
     return np.array(data)
 
@@ -156,7 +161,42 @@ def get_frame_data(frames):
     y = np.expand_dims(y, axis=0) if len(y.shape) != 4 else y
     
     return x, y, tx, ty
-    
+
+def preprocess():
+    video_list = get_video_list(hp.dataset)
+    vid_id = 0
+    data = pd.DataFrame(columns = ['vid_id','vid_name'])
+    ppath = os.path.join(hp.data,"preprocessed.csv")
+    if os.path.exists(ppath):
+        data = pd.read_csv(ppath)
+        vid_id = int(data['vid_id'].values.max()) + 1
+    for folder, files in tqdm(video_list):
+        if not os.path.split(folder)[-1] in list(data['vid_name'].values):
+            try:
+                assert contains_only_videos(files)
+                for file in files:
+                    fi = 0
+                    fpath = os.path.join(hp.data,str(vid_id),"frames")
+                    lpath = os.path.join(hp.data,str(vid_id),"ldmks")
+                    os.makedirs(fpath, exist_ok=True)
+                    os.makedirs(lpath, exist_ok=True)
+                    try:
+                        frames = extract_frames(os.path.join(folder, file))
+                        ldmks = [plot_landmarks(f) for f in frames]
+                        assert len(frames) == len(ldmks)
+                        for f,l in zip(frames,ldmks):
+                            io.imsave(os.path.join(fpath,"{}.png".format(fi)), f)
+                            io.imsave(os.path.join(lpath,"{}.png".format(fi)), l)
+                            fi += 1
+                    except:
+                        continue
+                data = data.append(pd.Series({'vid_id':vid_id,'vid_name':os.path.split(folder)[-1]}), ignore_index=True)
+                data.to_csv(ppath)
+                vid_id += 1
+            except:
+                continue
+        else:
+            continue
 
 def get_video_data(video):
     

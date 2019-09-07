@@ -11,17 +11,19 @@ import os
 import cv2
 import random
 import numpy as np
+import pickle as pkl
 import tensorflow as tf
 from tqdm import tqdm
-import skimage.io as io
 import pandas as pd
+from functools import partial
+import multiprocessing as mp
 from imutils import face_utils
 from hyperparams import Hyperparams as hp
 from face_alignment import FaceAlignment, LandmarksType
 from utils import detector, predictor, preprocess_input
 
 global face_alignment
-face_alignment = FaceAlignment(LandmarksType._2D, device=device)
+face_alignment = FaceAlignment(LandmarksType._2D, device='cuda')
 
 def get_video_list(source = hp.dataset):
     """
@@ -71,20 +73,34 @@ def extract_frames(video):
     cap.release()
     return frames
 
-def select_random_frames(frames):
+def select_random_frames(frames, K = hp.K):
     """
     Selects K+1 random frames from a list of frames.
+    :param frames: Iterator of frames.
     :param frames: Iterator of frames.
     :return: List of selected frames.
     """
     S = []
-    while len(S) <= hp.K:
+    while len(S) <= K:
         s = random.randint(0, len(frames)-1)
         if s not in S:
             S.append(s)
 
     return [frames[s] for s in S]
 
+def select_random_indices(length, K = hp.K):
+    """
+    Selects K+1 random indices from a list of iteration length.
+    :param length: Iteration length.
+    :return: List of selected indices.
+    """
+    S = []
+    while len(S) <= K:
+        s = random.randint(0, length-1)
+        if s not in S:
+            S.append(s)
+
+    return S
 
 def plot_landmarks(frame):
     """
@@ -106,7 +122,7 @@ def plot_landmarks(frame):
     data = np.ones_like(frame)*255
     
     #landmarks = get_dlib(frame)
-    landmarks = face_alignment.get_landmarks_from_image(frame)[0]
+    landmarks = np.int32(face_alignment.get_landmarks_from_image(frame)[0])
     
     # Head
     cv2.polylines(data,[landmarks[:17, :]],False,(0,255,0),2)        
@@ -163,81 +179,110 @@ def get_frame_data(frames):
     return x, y, tx, ty
 
 def preprocess():
+    '''
+    preprocess the dataset, extracts video frames, plots ldmk points and stores K+1 pairs as pickled data file.
+    '''
     video_list = get_video_list(hp.dataset)
-    vid_id = 0
-    data = pd.DataFrame(columns = ['vid_id','vid_name'])
-    ppath = os.path.join(hp.data,"preprocessed.csv")
-    if os.path.exists(ppath):
-        data = pd.read_csv(ppath)
-        vid_id = int(data['vid_id'].values.max()) + 1
-    for folder, files in tqdm(video_list):
-        if not os.path.split(folder)[-1] in list(data['vid_name'].values):
+    os.makedirs(hp.preprocessed, exist_ok=True)
+    for video in tqdm(video_list):
+        folder, files = video
+        vid_name = os.path.split(folder)[-1]
+        if not '{}.pkl'.format(vid_name) in os.listdir(hp.preprocessed):
+            if not  contains_only_videos(files):
+                print('In {} All files are not video files.'.format(vid_name))
+                continue        
             try:
-                assert contains_only_videos(files)
-                for file in files:
-                    fi = 0
-                    fpath = os.path.join(hp.data,str(vid_id),"frames")
-                    lpath = os.path.join(hp.data,str(vid_id),"ldmks")
-                    os.makedirs(fpath, exist_ok=True)
-                    os.makedirs(lpath, exist_ok=True)
-                    try:
-                        frames = extract_frames(os.path.join(folder, file))
-                        ldmks = [plot_landmarks(f) for f in frames]
-                        assert len(frames) == len(ldmks)
-                        for f,l in zip(frames,ldmks):
-                            io.imsave(os.path.join(fpath,"{}.png".format(fi)), f)
-                            io.imsave(os.path.join(lpath,"{}.png".format(fi)), l)
-                            fi += 1
-                    except:
-                        continue
-                data = data.append(pd.Series({'vid_id':vid_id,'vid_name':os.path.split(folder)[-1]}), ignore_index=True)
-                data.to_csv(ppath)
-                vid_id += 1
+                tot_frames = [] 
+                for file in files:            
+                    tot_frames.append(extract_frames(os.path.join(folder, file)))
+                            
+                tot_frames = np.concatenate(tuple(tot_frames),axis=0)
+                frames = select_random_frames(tot_frames)
+                data = []
+                for i in range(len(frames)):
+                    x = frames[i]
+                    y = plot_landmarks(x)
+                    data.append({
+                        'frame': x,
+                        'landmarks': y,
+                    })
+                pkl.dump(data, open(os.path.join(hp.preprocessed, "{}.pkl".format(vid_name)), 'wb'))
             except:
+                print('{} file can\'t be processed.'.format(vid_name))
                 continue
         else:
+            print('{}.pkl file already exist.'.format(vid_name))
             continue
 
-def get_video_data(video):
-    
-    folder, files = video
+def data(fine_tune = False, shuffle_frames = True):
+    '''
+    Iteration function for feeding input data to the Neural Network.
 
-    try:
-        assert contains_only_videos(files)
-        frames = np.concatenate([extract_frames(os.path.join(folder, f)) for f in files])
-        
-        return get_frame_data(frames)  
-        
-    except:
-        return [None, None, None, None]
+    Args:
+        fine_tune (bool): Whether input to to fine tunning model or regular.
+        shuffle_frames (bool): Whether to shuffle the K+1 frames.
 
-def data(fine_tune = False):
+    Returns:
+        TensorFlow dataset iterator.
+    '''
     
-    video_list = get_video_list(hp.dataset)
-    idx = [i for i in range(0, len(video_list)-1)]
-    random.shuffle(idx)
+    files = [
+            os.path.join(path, filename)
+            for path, dirs, files in os.walk(hp.preprocessed)
+            for filename in files
+            if filename.endswith('.pkl')
+            ]
+    files.sort()
+    indexes = [idx for idx in range(len(files))]
         
     def generator():            
-        for vid_id in idx:            
-            x, y, tx, ty = get_video_data(video_list[vid_id])
-            if None in [x,y,tx,ty]:
-                continue
+        for vid_id in indexes:            
+            
+            data = pkl.load(open(files[vid_id], 'rb'))
+            
+            if shuffle_frames:
+                random.shuffle(data)
+
+            K_plus_frames = []
+            K_plus_ldmks = []
+            for d in data:
+                K_plus_frames.append(d['frame'])
+                K_plus_ldmks.append(d['landmarks'])
+
+            tx, ty = np.float32(K_plus_frames.pop()), np.float32(K_plus_ldmks.pop())
+            x, y = np.float32(K_plus_frames), np.float32(K_plus_ldmks)
+            
+            tx = preprocess_input(tx, mode='tf')
+            ty = preprocess_input(ty, mode='tf')
+            x = preprocess_input(x, mode='tf')
+            y = preprocess_input(y, mode='tf')
+            
+            tx = np.expand_dims(np.expand_dims(tx, axis=0), axis=0) if len(tx.shape) != 5 else tx
+            ty = np.expand_dims(np.expand_dims(ty, axis=0), axis=0) if len(ty.shape) != 5 else ty
+            
+            x = np.expand_dims(x, axis=0) if len(x.shape) != 4 else x
+            y = np.expand_dims(y, axis=0) if len(y.shape) != 4 else y
+
+
             yield np.int32(np.array(vid_id).reshape(-1)), np.float32(x), np.float32(y), np.float32(tx), np.float32(ty)
     
     output_types_  = (tf.int32,tf.float32,tf.float32,tf.float32,tf.float32)
     output_shapes_ = (tf.TensorShape([1,]),
                       tf.TensorShape([None] + list(hp.img_size)),
                       tf.TensorShape([None] + list(hp.img_size)),
-                      tf.TensorShape([None] + list(hp.img_size)),
-                      tf.TensorShape([None] + list(hp.img_size)))
+                      tf.TensorShape([None] + [None] + list(hp.img_size)),
+                      tf.TensorShape([None] + [None] + list(hp.img_size)))
 
     dataset = tf.data.Dataset.from_generator(generator,
                                        output_types= output_types_, 
                                        output_shapes= output_shapes_)
     dataset = dataset.apply(tf.data.experimental.ignore_errors())
     dataset = dataset.repeat()
-    dataset = dataset.batch(1)
+    dataset = dataset.batch(hp.batch)
     iterator = dataset.make_one_shot_iterator()
     next_batch = iterator.get_next()
     
     return next_batch
+
+if __name__ == '__main__':
+    preprocess()

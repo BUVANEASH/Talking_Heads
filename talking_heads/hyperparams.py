@@ -10,16 +10,17 @@ class hyperparameters():
     def __init__(self):        
         # Dataset
         self.dataset = "/media/new_hdd1/VoxCeleb-2/Video/dev/mp4"
-        self.data = "../data/preprocessed/"
+        self.data = "/media/new_hdd1/Face_Morp_2.0/Talking_Heads/data"
+        self.preprocessed = os.path.join(self.data,"preprocessed")
         
         # logdir
         self.model = "fine"
-        self.modeldir = "../results/model/"
+        self.modeldir = "/media/new_hdd1/Face_Morp_2.0/Talking_Heads/results/model/"
         self.logdir = os.path.join(self.modeldir, "meta")
         self.fine_logdir = os.path.join(self.modeldir, self.model)
                
         # No of training videos
-        self.train_videos = 145569
+        self.train_videos = len(os.listdir(self.preprocessed))
         
         # Network Architecture parameters
         # Encoder channels and self-attention channel
@@ -55,6 +56,9 @@ class hyperparameters():
         
         # K-shot learning,
         self.K = 8
+
+        # batch size
+        self.batch = 8
         
         # Loss weights
         self.loss_vgg19_wt =  1e-2

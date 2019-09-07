@@ -295,7 +295,7 @@ def self_attention(x, channels, sn=False, scope='self_attention'):
         o = tf.matmul(beta, hw_flatten(h))  # [bs, N, C]
         gamma = tf.get_variable("gamma", [1], initializer=tf.constant_initializer(0.0))
 
-        o = tf.reshape(o, shape=x.shape)  # [bs, h, w, C]
+        o = tf.reshape(o, shape=[-1, x.shape[1], x.shape[2], x.shape[3]])  # [bs, h, w, C]
         x = gamma * o + x
 
     return x
@@ -369,53 +369,50 @@ def sigmoid(x):
 # Normalization function
 ##################################################################################
 
-def instance_norm(x, is_training=True, scope='IN'):
-    # TODO: replace with tf.nn.batch_normalization(x, batch_mean, batch_var, beta, gamma, epsilon)
-    with tf.variable_scope(scope) :
-        _, _, _, c = x.get_shape().as_list()
-        decay = 0.9
-        epsilon = 1e-05
+#def instance_norm(x, is_training=True, scope='IN'):
+#    with tf.variable_scope(scope) :
+#        _, w, h, c = x.get_shape().as_list()
+#        epsilon = 1e-05
+#        
+#        beta  = tf.get_variable("beta", shape=[c], dtype=tf.float32, initializer=tf.constant_initializer(0.0), trainable=is_training)
+#        gamma = tf.get_variable("gamma", shape=[c], dtype=tf.float32, initializer=tf.constant_initializer(0.0), trainable=is_training)
+#               
+#        batch_mean, batch_var = tf.nn.moments(x, [1, 2])
+#
+#        x = tf.reshape(tf.transpose(x, perm = [0,3,1,2]), shape = [-1,c,w*h])
+#
+#        x = tf.nn.batch_normalization(x, 
+#                               tf.expand_dims(batch_mean, axis=-1), tf.expand_dims(batch_var, axis=-1), 
+#                               tf.expand_dims(beta, axis=-1), tf.expand_dims(gamma, axis=-1), epsilon)
+#        
+#        x = tf.transpose(tf.reshape(x, shape = [-1,c,w,h]), perm = [0,2,3,1])
+#                
+#        return x
 
-        test_mean = tf.get_variable("pop_mean", shape=[c], dtype=tf.float32, initializer=tf.constant_initializer(0.0), trainable=False)
-        test_var  = tf.get_variable("pop_var",  shape=[c], dtype=tf.float32, initializer=tf.constant_initializer(1.0), trainable=False)
         
-        beta  = tf.get_variable("beta", shape=[c], dtype=tf.float32, initializer=tf.constant_initializer(0.0), trainable=is_training)
-        gamma = tf.get_variable("gamma", shape=[c], dtype=tf.float32, initializer=tf.constant_initializer(0.0), trainable=is_training)
-               
-        if is_training:
-            # Update exponential moving averages of the batch mean and var
-            batch_mean, batch_var = tf.nn.moments(x, [1, 2])
-            
-            ema_mean = tf.assign(test_mean, test_mean * decay + batch_mean[-1] * (1 - decay))
-            ema_var  = tf.assign(test_var,  test_var  * decay + batch_var[-1]  * (1 - decay))
-
-            with tf.control_dependencies([ema_mean, ema_var]):
-                return tf.nn.batch_normalization(x, batch_mean[-1], batch_var[-1], beta, gamma, epsilon)
-        else:
-            return tf.nn.batch_normalization(x, test_mean, test_var, beta, gamma, epsilon)
-
+def instance_norm(x, is_training=True, scope='IN'):
+    epsilon = 1e-05
+    return tf.contrib.layers.instance_norm(x, epsilon = epsilon, scope = scope)
+    
 def adaptive_instance_norm(x, z, is_training=True, scope='AdaIN'):
     with tf.variable_scope(scope) :
-        _, _, _, c = x.get_shape().as_list()
-        decay = 0.9
+        _, w, h, c = x.get_shape().as_list()
         epsilon = 1e-05
-
-        test_mean = tf.get_variable("pop_mean", shape=[c], dtype=tf.float32, initializer=tf.constant_initializer(0.0), trainable=False)
-        test_var  = tf.get_variable("pop_var",  shape=[c], dtype=tf.float32, initializer=tf.constant_initializer(1.0), trainable=False)
 
         beta = z[0]
         gamma = z[1]
         
-        if is_training:
-            # Update exponential moving averages of the batch mean and var
-            batch_mean, batch_var = tf.nn.moments(x, [1, 2])
-            ema_mean = tf.assign(test_mean, test_mean * decay + batch_mean[-1] * (1 - decay))
-            ema_var  = tf.assign(test_var,  test_var  * decay + batch_var[-1]  * (1 - decay))
-
-            with tf.control_dependencies([ema_mean, ema_var]):
-                return tf.nn.batch_normalization(x, batch_mean[-1], batch_var[-1], beta, gamma, epsilon)
-        else:
-            return tf.nn.batch_normalization(x, test_mean, test_var, beta, gamma, epsilon)
+        batch_mean, batch_var = tf.nn.moments(x, [1, 2])         
+        
+        x = tf.reshape(tf.transpose(x, perm = [0,3,1,2]), shape = [-1,c,w*h])
+        
+        x = tf.nn.batch_normalization(x, 
+                               tf.expand_dims(batch_mean, axis=-1), tf.expand_dims(batch_var, axis=-1), 
+                               tf.expand_dims(beta, axis=-1), tf.expand_dims(gamma, axis=-1), epsilon)
+        
+        x = tf.transpose(tf.reshape(x, shape = [-1,c,w,h]), perm = [0,2,3,1])
+                
+        return x
 
 
 def spectral_norm(w, iteration=1):

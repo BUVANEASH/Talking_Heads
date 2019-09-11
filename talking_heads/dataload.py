@@ -257,21 +257,14 @@ def data(fine_tune = False, shuffle_frames = True):
             x = preprocess_input(x, mode='tf')
             y = preprocess_input(y, mode='tf')
             
-            tx = np.expand_dims(np.expand_dims(tx, axis=0), axis=0) if len(tx.shape) != 5 else tx
-            ty = np.expand_dims(np.expand_dims(ty, axis=0), axis=0) if len(ty.shape) != 5 else ty
-            
-            x = np.expand_dims(x, axis=0) if len(x.shape) != 4 else x
-            y = np.expand_dims(y, axis=0) if len(y.shape) != 4 else y
-
-
             yield np.int32(np.array(vid_id).reshape(-1)), np.float32(x), np.float32(y), np.float32(tx), np.float32(ty)
     
     output_types_  = (tf.int32,tf.float32,tf.float32,tf.float32,tf.float32)
     output_shapes_ = (tf.TensorShape([1,]),
-                      tf.TensorShape([None] + list(hp.img_size)),
-                      tf.TensorShape([None] + list(hp.img_size)),
-                      tf.TensorShape([None] + [None] + list(hp.img_size)),
-                      tf.TensorShape([None] + [None] + list(hp.img_size)))
+                      tf.TensorShape([hp.K] + list(hp.img_size)),
+                      tf.TensorShape([hp.K] + list(hp.img_size)),
+                      tf.TensorShape(list(hp.img_size)),
+                      tf.TensorShape(list(hp.img_size)))
 
     dataset = tf.data.Dataset.from_generator(generator,
                                        output_types= output_types_, 

@@ -17,7 +17,7 @@ from utils import learning_rate_decay, preprocess_input
 from network_ops import weight_init, weight_regularizer
 from network_ops import resblock_down, resblock_down_no_instance_norm, resblock, resblock_condition, resblock_up_condition, self_attention
 from network_ops import fully_connected, global_sum_pooling, relu, tanh, sigmoid
-from dataload import get_video_list, get_frame_data
+from dataload import get_video_list, get_frame_data, data
 
 class KGAN():
     
@@ -130,14 +130,14 @@ class KGAN():
                                       use_bias=False, is_training=self.training, 
                                       sn=False, scope='Projection_matrix') # out B*13062
             
-            return tf.squeeze(e), tf.squeeze(psi_hat)
+            return e, psi_hat
             
     def Generator(self,y, psi_Pe=None, psi_hat_init = None, sn=True, reuse=False):        
             
         def img2img(y, z):
             with tf.variable_scope("image-to-image", reuse=reuse):
                 
-                z_splits = tf.split(z, num_or_size_splits=self.split_lens)
+                z_splits = tf.split(z, num_or_size_splits=self.split_lens, axis = -1)
                 
                 yr = tf.image.resize_image_with_crop_or_pad(y, 256, 256) # out B*256*256*3
                 x_rd1 = resblock_down(yr, channels=self.enc_down_ch[0], use_bias=False, is_training=self.training, sn=sn, scope='resblock_down_1') # out B*128*128*64
@@ -169,15 +169,13 @@ class KGAN():
         
         with tf.variable_scope("generator", reuse=reuse):
             
-            psi_hat = tf.get_variable("AdaIN_params", shape=[sum(self.split_lens)], initializer=psi_hat_init if (self.training and self.fine_tune) else weight_init, 
+            psi_hat = tf.get_variable("AdaIN_params", shape=[self.batch, sum(self.split_lens)], initializer=psi_hat_init if (self.training and self.fine_tune) else weight_init, 
                                     regularizer=weight_regularizer, 
                                     trainable=True if (self.training and self.fine_tune) else False)
 
             if not self.fine_tune:
-                Pe = tf.assign(psi_hat, psi_Pe)
-                with tf.control_dependencies([Pe]):
-                    x = img2img(y,psi_hat)
-                    return x
+                x = img2img(y,psi_Pe)
+                return x
             else:
                 x = img2img(y,psi_hat)
                 return x
@@ -201,17 +199,18 @@ class KGAN():
                             
                 orb = resblock(o6, channels=self.N_Vec, kernel=4, pads=[2,1], use_bias=False, is_training=self.training, sn=sn, scope='resblock') # out B*4*4*512
                 
-                ogs = global_sum_pooling(orb) # out B*1*512
-                o = relu(ogs) # out B*1*512
+                ogs = global_sum_pooling(orb) # out B*512
+                o = relu(ogs) # out B*512
                 
-                return tf.squeeze(o), [o0,o1,o2,o3,o4,o5,o6]
+                return o, [o0,o1,o2,o4,o5,o6]
                        
         with tf.variable_scope("discriminator", reuse=reuse):
             
             self.W = tf.get_variable("W", shape=[self.train_videos,self.N_Vec], initializer=weight_init, regularizer=weight_regularizer)
             w_0 = tf.get_variable("w_0", shape=[1,self.N_Vec], initializer=weight_init, regularizer=weight_regularizer)
             
-            w_hat = tf.get_variable("w_hat", shape=[1,self.N_Vec], initializer=tf.math.add(tf.reshape(e_new,shape=[-1,self.N_Vec]), w_0) if (self.training and self.fine_tune) else weight_init, 
+            w_hat = tf.get_variable("w_hat", shape=[1,self.N_Vec,1],
+                                    initializer=tf.transpose(tf.math.add(tf.reshape(e_new,shape=[1,1,self.N_Vec]), w_0), perm = [0,2,1]) if (self.training and self.fine_tune) else weight_init, 
                                     regularizer=weight_regularizer, 
                                     trainable=True if (self.training and self.fine_tune) else False)
     
@@ -220,14 +219,13 @@ class KGAN():
             o , d_act = Discriminator_Net(x,y)
             
             if not self.fine_tune:
-                w_hat = tf.math.add(tf.nn.embedding_lookup(self.W,i), w_0)
-                with tf.control_dependencies([w_hat]):
-                    r = tf.squeeze(tf.matmul(tf.expand_dims(o,axis=1), tf.expand_dims(w_hat,axis=-1)))
-                    r = tanh(tf.math.add(r, b))
-                    return r, d_act
+                W_w = tf.transpose(tf.math.add(tf.nn.embedding_lookup(self.W,i), w_0), perm = [0,2,1])
+                r = tf.matmul(tf.expand_dims(o, axis = 1), W_w)
+                r = tf.squeeze(tanh(tf.math.add(r, b)))
+                return r, d_act
             else:
-                r = tf.squeeze(tf.matmul(tf.expand_dims(o,axis=1), tf.expand_dims(w_hat,axis=-1)))
-                r = tanh(tf.math.add(r, b))
+                r = tf.matmul(tf.expand_dims(o, axis = 1), w_hat)
+                r = tf.squeeze(tanh(tf.math.add(r, b)))
                 return r, d_act
     
     def VGGFACE(self, input_tensor=None, input_shape = (224, 224, 3)):
@@ -298,14 +296,14 @@ class KGAN():
             tf.summary.scalar("learning_rate_D", self.learning_rate_D)
             
             
-                
-            self.x = tf.placeholder(tf.float32, [None] + list(self.img_size), name='x')
-            self.y = tf.placeholder(tf.float32, [None] + list(self.img_size), name='y')
-            self.tx = tf.placeholder(tf.float32, [None] + list(self.img_size), name='tx')
-            self.ty = tf.placeholder(tf.float32, [None] + list(self.img_size), name='ty')
             if not self.fine_tune:
-                self.idx = tf.placeholder(tf.int32, [1,], name='idx')
-                
+                (self.idx, self.x, self.y, self.tx, self.ty) = data()
+            else:
+                self.x = tf.placeholder(tf.float32, [self.K] + list(self.img_size), name='x')
+                self.y = tf.placeholder(tf.float32, [self.K] + list(self.img_size), name='y')
+                self.tx = tf.placeholder(tf.float32, list(self.img_size), name='tx')
+                self.ty = tf.placeholder(tf.float32, list(self.img_size), name='ty')
+            
             # Embedder
             # Calculate average encoding vector for video and AdaIn params input
             self.e_hat, self.psi_hat = self.Embedder(self.x, self.y, sn=True, reuse=False)
@@ -346,7 +344,7 @@ class KGAN():
             self.loss_ADV = self.loss_adv(self.r_x_hat, self.D_act, self.D_act_hat)
                 
             if not self.fine_tune:
-                self.loss_MCH = self.loss_mch(self.e_hat, tf.reshape(tf.nn.embedding_lookup(self.W,self.idx), shape=[-1,1]))
+                self.loss_MCH = self.loss_mch(self.e_hat, tf.squeeze(tf.nn.embedding_lookup(self.W,self.idx), axis = 1))
                 
                 self.loss_EG =  self.loss_CNT + self.loss_ADV + self.loss_MCH 
             else:
@@ -360,8 +358,8 @@ class KGAN():
                 tf.summary.scalar("loss_MCH", self.loss_MCH)
             tf.summary.scalar("loss_EG", self.loss_EG)
             tf.summary.scalar("loss_DSC", self.loss_DSC)
-            tf.summary.scalar("loss_r_x_hat", self.r_x_hat)
-            tf.summary.scalar("loss_r_x", self.r_x)
+            tf.summary.scalar("loss_r_x_hat", tf.reduce_mean(self.r_x_hat))
+            tf.summary.scalar("loss_r_x", tf.reduce_mean(self.r_x))
             
             # Embedder & Generator Optimization
             EG_var_list = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 'generator')
@@ -418,25 +416,8 @@ class KGAN():
         self.writer = tf.summary.FileWriter(self.logdir, self.sess.graph)
         
         if not self.fine_tune:
-            if os.path.exists(self.video_list_path):
-                with open(self.video_list_path,'rb') as f:
-                    video_list = pickle.load(f)
-            else:
-                video_list = get_video_list(self.dataset)
-                with open(self.video_list_path,'rb') as f:
-                    pickle.dump(video_list,f)
             while 1:                
-                print("shuffling Dataset.....")                                
-                idx = [i for i in range(0, len(video_list)-1)]
-                random.shuffle(idx)                
-                for v_id in idx:                    
-                    vid_id = np.array(v_id).reshape(-1)
-                    x, y, tx, ty = get_video_data(video_list[v_id])                    
-                    if any([elem is None for elem in [x,y,tx,ty]]):
-                        continue                    
-                    feeddict = {self.x:x,self.y:y,self.tx:tx,self.ty:ty,self.idx:vid_id}                    
-                    gs = self.training_operation(feeddict)
-                    if gs > self.num_iterations: break
+                gs = self.training_operation()
                 if gs > self.num_iterations: break
         else:            
             while 1:                
@@ -450,22 +431,21 @@ class KGAN():
                     
         print("Training Completed..")
     
-    def training_operation(self, feeddict):
+    def training_operation(self, feeddict = None):
         start_time = datetime.datetime.now()                    
         loss_dsc, _ = self.sess.run([self.loss_DSC, 
                                      self.train_D],
                                      feed_dict=feeddict)        
-        loss_eg, _ = self.sess.run([self.loss_EG, 
-                                    self.train_EG],
+        loss_eg, _, summary, gs = self.sess.run([self.loss_EG, 
+                                    self.train_EG,
+                                    self.merged,
+                                    self.global_step_increment],
                                     feed_dict=feeddict)
         duration = datetime.datetime.now() - start_time
         
-        summary, gs = self.sess.run([self.merged, self.global_step_increment],
-                                    feed_dict=feeddict)
-        
         if gs % self.log_step == 0:
             tf.logging.info('%s: step %d, loss_eg = %.5f, loss_dsc = %.5f (%.1f examples/sec; %.3f sec/batch)',
-                            datetime.datetime.now(),gs,loss_eg,loss_dsc,(1/duration.total_seconds()),duration.total_seconds())                                                          
+                            datetime.datetime.now(),gs,loss_eg,loss_dsc,(self.batch/duration.total_seconds()),duration.total_seconds())                                                          
         # Write checkpoint files at every 1k steps
         if gs % self.save_step == 0:
             if not self.fine_tune:

@@ -120,7 +120,7 @@ class KGAN():
             e_rd6 = resblock_down_no_instance_norm(e_rd5, channels=self.enc_down_ch[3], use_bias=False, is_training=self.training, sn=sn, scope='resblock_down_6') # out (B*K)*4*4*512
             
             egs = global_sum_pooling(e_rd6) # out (B*K)*512
-            er = relu(egs) # out (B*K)*512
+            er = tanh(egs) # out (B*K)*512
 
             es = tf.reshape(er, [-1,self.K,self.N_Vec]) # out B*K*512
 
@@ -200,7 +200,7 @@ class KGAN():
                 orb = resblock(o6, channels=self.N_Vec, kernel=4, pads=[2,1], use_bias=False, is_training=self.training, sn=sn, scope='resblock') # out B*4*4*512
                 
                 ogs = global_sum_pooling(orb) # out B*512
-                o = relu(ogs) # out B*512
+                o = tanh(ogs) # out B*512
                 
                 return o, [o0,o1,o2,o4,o5,o6]
                        

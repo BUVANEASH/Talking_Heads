@@ -58,7 +58,7 @@ class hyperparameters():
         self.K = 8
 
         # batch size
-        self.batch = 4
+        self.batch = 1
         
         # Loss weights
         self.loss_vgg19_wt =  1e-2

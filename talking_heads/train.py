@@ -13,8 +13,9 @@ from hyperparams import Hyperparams as hp
 def main():
     
     config = tf.ConfigProto()
-    config.allow_soft_placement = True
-    config.log_device_placement = False
+    config.gpu_options.allocator_type="BFC"
+    #config.allow_soft_placement = True
+    #config.log_device_placement = False
     config.gpu_options.allow_growth = True
     
     sess = tf.Session(config=config)

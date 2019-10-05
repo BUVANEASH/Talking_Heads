@@ -169,9 +169,10 @@ class KGAN():
         
         with tf.variable_scope("generator", reuse=reuse):
             
-            psi_hat = tf.get_variable("AdaIN_params", shape=[self.batch, sum(self.split_lens)], initializer=psi_hat_init if (self.training and self.fine_tune) else weight_init, 
-                                    regularizer=weight_regularizer, 
-                                    trainable=True if (self.training and self.fine_tune) else False)
+            psi_hat = tf.get_variable("AdaIN_params", shape=[self.batch, sum(self.split_lens)], 
+                                      initializer= tf.constant_initializer(psi_hat_init) if (self.training and self.fine_tune) else weight_init, 
+                                      regularizer=weight_regularizer, 
+                                      trainable=True if (self.training and self.fine_tune) else False)
 
             if not self.fine_tune:
                 x = img2img(y,psi_Pe)
@@ -209,8 +210,21 @@ class KGAN():
             self.W = tf.get_variable("W", shape=[self.train_videos,self.N_Vec], initializer=weight_init, regularizer=weight_regularizer)
             w_0 = tf.get_variable("w_0", shape=[1,self.N_Vec], initializer=weight_init, regularizer=weight_regularizer)
             
+            
+            if self.training and self.fine_tune:
+                w_0_var = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, w_0.name)
+                self.sess.run(tf.variables_initializer(w_0_var))
+                w_0_saver = tf.train.Saver(var_list=w_0_var)
+                w_0_saver.restore(self.sess, tf.train.latest_checkpoint(self.logdir))
+                
+                w_0_value = self.sess.run([w_0])[0]
+                
+                w_hat_init = tf.constant_initializer(np.transpose(np.expand_dims(e_new + w_0_value, axis=0), axes = [0,2,1]))
+            else:
+                w_hat_init = weight_init
+            
             w_hat = tf.get_variable("w_hat", shape=[1,self.N_Vec,1],
-                                    initializer=tf.transpose(tf.math.add(tf.reshape(e_new,shape=[1,1,self.N_Vec]), w_0), perm = [0,2,1]) if (self.training and self.fine_tune) else weight_init, 
+                                    initializer=w_hat_init, 
                                     regularizer=weight_regularizer, 
                                     trainable=True if (self.training and self.fine_tune) else False)
     
@@ -299,10 +313,10 @@ class KGAN():
             if not self.fine_tune:
                 (self.idx, self.x, self.y, self.tx, self.ty) = data()
             else:
-                self.x = tf.placeholder(tf.float32, [self.K] + list(self.img_size), name='x')
-                self.y = tf.placeholder(tf.float32, [self.K] + list(self.img_size), name='y')
-                self.tx = tf.placeholder(tf.float32, list(self.img_size), name='tx')
-                self.ty = tf.placeholder(tf.float32, list(self.img_size), name='ty')
+                self.x = tf.placeholder(tf.float32, [None] + [self.K] + list(self.img_size), name='x')
+                self.y = tf.placeholder(tf.float32, [None] + [self.K] + list(self.img_size), name='y')
+                self.tx = tf.placeholder(tf.float32, [None] + list(self.img_size), name='tx')
+                self.ty = tf.placeholder(tf.float32, [None] + list(self.img_size), name='ty')
             
             # Embedder
             # Calculate average encoding vector for video and AdaIn params input
@@ -322,13 +336,14 @@ class KGAN():
                 
                 embedder_var_list = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 'embedder')
                 
+                #self.sess.run(tf.variables_initializer(embedder_var_list))
+                self.sess.run(tf.global_variables_initializer())
+                
                 embedder_saver = tf.train.Saver(var_list=embedder_var_list)
                 embedder_saver.restore(self.sess, tf.train.latest_checkpoint(self.logdir))
                 
-                self.sess.run(tf.global_variables_initializer)
-                
                 e_hat, psi_hat = self.sess.run([self.e_hat, self.psi_hat],
-                                               feeddict = {self.x:x,
+                                               feed_dict = {self.x:x,
                                                            self.y:y})
                 
                 # Generator
@@ -339,6 +354,8 @@ class KGAN():
                 self.r_x_hat, self.D_act_hat = self.Discriminator(self.x_hat, self.ty, i=None, e_new = e_hat, sn=True, reuse=False)
                 # real score for real image
                 self.r_x, self.D_act =self.Discriminator(self.tx, self.ty, i=None, e_new = e_hat, sn=True, reuse=True)
+                
+                
             
             self.loss_CNT = self.loss_cnt(self.tx, self.x_hat)
             self.loss_ADV = self.loss_adv(self.r_x_hat, self.D_act, self.D_act_hat)
@@ -411,22 +428,22 @@ class KGAN():
         
         tf.logging.set_verbosity(tf.logging.INFO)
         
-        self.load(self.logdir)
+        self.load(self.logdir, load_gs = not self.fine_tune, skip_fine_params = self.fine_tune)
+
+        if self.fine_tune:
+            self.load(self.fine_logdir, load_gs = self.fine_tune, skip_fine_params = not self.fine_tune)
             
-        self.writer = tf.summary.FileWriter(self.logdir, self.sess.graph)
+        self.writer = tf.summary.FileWriter(self.logdir if not self.fine_tune else self.fine_logdir, self.sess.graph)
         
         if not self.fine_tune:
             while 1:                
                 gs = self.training_operation()
                 if gs > self.num_iterations: break
         else:            
-            while 1:                
-                random.shuffle(self.frames)                
-                for f in self.frames:                    
-                    x, y, tx, ty = get_frame_data(f)                   
-                    feeddict = {self.x:x,self.y:y,self.tx:tx,self.ty:ty}                    
-                    gs = self.training_operation(feeddict)
-                    if gs > self.num_iterations: break
+            while 1:                                
+                _, _, tx, ty = get_frame_data(self.frames, K = 1)                   
+                feeddict = {self.tx:tx,self.ty:ty}                    
+                gs = self.training_operation(feeddict)
                 if gs > self.num_iterations: break
                     
         print("Training Completed..")
@@ -461,18 +478,23 @@ class KGAN():
         self.saver.save(self.sess, os.path.join(logdir, 'model.ckpt'), global_step=gs)
         tf.logging.info('Saving ckeckpoint at step %d',gs)
     
-    def load(self, logdir):
-        
+    def load(self, logdir, load_gs = True, skip_fine_params = False):
+    
         self.sess.run(tf.global_variables_initializer())
         
         var_list = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 'generator')
         
-        if not self.fine_tune:
-            var_list += tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 'embedder')
+        var_list += tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 'embedder')
         
         if self.training:
-            var_list += tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 'discriminator') + \
-                        tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, 'global_step')
+            var_list += tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 'discriminator')
+        
+        if load_gs:
+            var_list += tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, 'global_step')
+            
+        if skip_fine_params:
+            var_list.remove(tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 'generator/AdaIN_params')[0])
+            var_list.remove(tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 'discriminator/w_hat')[0])
         
         self.saver = tf.train.Saver(var_list)
         

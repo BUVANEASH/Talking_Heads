@@ -157,8 +157,8 @@ def get_dlib(image):
     dlib_pts = face_utils.shape_to_np(shape_pts)
     return np.array(dlib_pts, dtype=np.int32)
 
-def get_frame_data(frames):
-    K_plus_frames = select_random_frames(frames)
+def get_frame_data(frames, K = hp.K):
+    K_plus_frames = select_random_frames(frames, K = hp.K)
         
     K_plus_ldmks = [plot_landmarks(f) for f in K_plus_frames]
            
@@ -173,8 +173,8 @@ def get_frame_data(frames):
     tx = np.expand_dims(tx, axis=0) if len(tx.shape) != 4 else tx
     ty = np.expand_dims(ty, axis=0) if len(ty.shape) != 4 else ty
     
-    x = np.expand_dims(x, axis=0) if len(x.shape) != 4 else x
-    y = np.expand_dims(y, axis=0) if len(y.shape) != 4 else y
+    x = np.expand_dims(x, axis=0) if len(x.shape) != 5 else x
+    y = np.expand_dims(y, axis=0) if len(y.shape) != 5 else y
     
     return x, y, tx, ty
 
@@ -197,7 +197,7 @@ def preprocess():
                     tot_frames.append(extract_frames(os.path.join(folder, file)))
                             
                 tot_frames = np.concatenate(tuple(tot_frames),axis=0)
-                frames = select_random_frames(tot_frames)
+                frames = select_random_frames(tot_frames, K = hp.K)
                 data = []
                 for i in range(len(frames)):
                     x = frames[i]

@@ -1,4 +1,9 @@
-tensorflow-gpu==1.13.1
-keras
-keras_vggface
-numpy
+tqdm==4.31.1
+tensorflow==1.13.1
+numpy==1.16.3
+Keras_Applications==1.0.7
+Keras==2.2.4
+dlib==19.18.0
+face_alignment==1.0.0
+imutils==0.5.3
+pandas==0.25.1

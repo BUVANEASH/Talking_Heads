@@ -3,13 +3,12 @@
 """
 Created on Tue Jul  2 10:25:52 2019
 
-@author: avantariml
+@author: BUVANEASH
 """
 import os
 import datetime
 import numpy as np
-import random
-import pickle
+from tqdm import tqdm
 import tensorflow as tf
 from keras_vggface.vggface import VGGFace
 from keras_vggface.utils import preprocess_tf_input
@@ -21,7 +20,7 @@ from dataload import get_video_list, get_frame_data, data
 
 class KGAN():
     
-    def __init__(self, sess, mode="train", fine_tune = False, model = "fine", frames = None):
+    def __init__(self, sess, mode="train", fine_tune = False, frames = None):
         
         #Tensorflow session
         self.sess = sess
@@ -171,8 +170,7 @@ class KGAN():
             
             psi_hat = tf.get_variable("AdaIN_params", shape=[self.batch, sum(self.split_lens)], 
                                       initializer= tf.constant_initializer(psi_hat_init) if (self.training and self.fine_tune) else weight_init, 
-                                      regularizer=weight_regularizer, 
-                                      trainable=True if (self.training and self.fine_tune) else False)
+                                      regularizer=weight_regularizer)
 
             if not self.fine_tune:
                 x = img2img(y,psi_Pe)
@@ -225,8 +223,7 @@ class KGAN():
             
             w_hat = tf.get_variable("w_hat", shape=[1,self.N_Vec,1],
                                     initializer=w_hat_init, 
-                                    regularizer=weight_regularizer, 
-                                    trainable=True if (self.training and self.fine_tune) else False)
+                                    regularizer=weight_regularizer)
     
             b = tf.get_variable("bias", shape=[1], initializer=weight_init, regularizer=weight_regularizer)
             
@@ -380,20 +377,24 @@ class KGAN():
             
             # Embedder & Generator Optimization
             EG_var_list = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 'generator')
+            
             if not self.fine_tune:
                 EG_var_list += tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 'embedder')
-            self.grads_EG = self.optimizer_EG.compute_gradients(self.loss_EG, var_list = EG_var_list)            
-            ## gradient clipping
-            self.clipped_EG = [(tf.clip_by_value(grad, -1., 1.) if not grad ==None else grad, var) for grad,var in self.grads_EG]
-            self.train_EG = self.optimizer_EG.apply_gradients(self.clipped_EG) #, global_step=self.global_step)
-            
+                
             # Discriminator Optimization
-            D_var_list = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 'discriminator')            
-            self.grads_D = self.optimizer_D.compute_gradients(self.loss_DSC, var_list = D_var_list)            
-            ## gradient clipping
-            self.clipped_D = [(tf.clip_by_value(grad, -1., 1.)  if not grad ==None else grad,var) for grad,var in self.grads_D]
-            # Updating Global step only during EG optimization as two optimization happens during trainig, so second incrementation of global step.
-            self.train_D = self.optimizer_D.apply_gradients(self.clipped_D) #, global_step=self.global_step)
+            D_var_list = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 'discriminator')  
+            
+            with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
+                self.grads_EG = self.optimizer_EG.compute_gradients(self.loss_EG, var_list = EG_var_list)            
+                ## gradient clipping
+                self.clipped_EG = [(tf.clip_by_value(grad, -1., 1.) if not grad ==None else grad, var) for grad,var in self.grads_EG]
+                self.train_EG = self.optimizer_EG.apply_gradients(self.clipped_EG) #, global_step=self.global_step)
+                                  
+                self.grads_D = self.optimizer_D.compute_gradients(self.loss_DSC, var_list = D_var_list)            
+                ## gradient clipping
+                self.clipped_D = [(tf.clip_by_value(grad, -1., 1.)  if not grad ==None else grad,var) for grad,var in self.grads_D]
+                # Updating Global step only during EG optimization as two optimization happens during trainig, so second incrementation of global step.
+                self.train_D = self.optimizer_D.apply_gradients(self.clipped_D) #, global_step=self.global_step)
 
             # Global step increment
             self.global_step_increment =  tf.assign_add(self.global_step, 1, name = "global_step_increment")
@@ -409,8 +410,8 @@ class KGAN():
             self.ty = tf.placeholder(tf.float32, [None] + list(self.img_size), name='ty')
             
             if not self.fine_tune:
-                self.x = tf.placeholder(tf.float32, [None] + list(self.img_size), name='x')
-                self.y = tf.placeholder(tf.float32, [None] + list(self.img_size), name='y')
+                self.x = tf.placeholder(tf.float32, [None] + [self.K] + list(self.img_size), name='x')
+                self.y = tf.placeholder(tf.float32, [None] + [self.K] + list(self.img_size), name='y')
                 
                 # Embedder
                 # Calculate average encoding vector for video and AdaIn params input
@@ -428,10 +429,10 @@ class KGAN():
         
         tf.logging.set_verbosity(tf.logging.INFO)
         
-        self.load(self.logdir, load_gs = not self.fine_tune, skip_fine_params = self.fine_tune)
+        _ = self.load(self.logdir, load_gs = not self.fine_tune, skip_fine_params = self.fine_tune)
 
         if self.fine_tune:
-            self.load(self.fine_logdir, load_gs = self.fine_tune, skip_fine_params = not self.fine_tune)
+            _ = self.load(self.fine_logdir, load_gs = self.fine_tune, skip_fine_params = not self.fine_tune)
             
         self.writer = tf.summary.FileWriter(self.logdir if not self.fine_tune else self.fine_logdir, self.sess.graph)
         
@@ -501,22 +502,29 @@ class KGAN():
         lastCheckpoint = tf.train.latest_checkpoint(logdir) 
         if lastCheckpoint is None:
             print("No checkpoint available.")
-            pass
+            return False
         else:
             print("Last checkpoint :", lastCheckpoint)
             self.saver.restore(self.sess, lastCheckpoint)
-        
+            return True
     
-    def inference(self, ty, x = None, y = None):
+    def inference(self, ty, x = None, y = None, batch = False):
                 
         if not self.fine_tune:
-            self.load(self.logdir)
-            feeddict = {self.x:x,self.y:y,self.ty:ty}
+            if self.load(self.logdir):
+                feeddict = {self.x:x,self.y:y,self.ty:ty}
         else:
-            self.load(self.fine_logdir)
-            feeddict = {self.ty:ty}
-            
-        frames = self.sess.run([self.x_hat], feed_dict=feeddict)
+            if self.load(self.fine_logdir):
+                feeddict = {self.ty:ty}
+        
+        if not batch:
+            frames = []
+            for i in tqdm(range(len(ty))):
+                feeddict.update({self.ty:np.expand_dims(ty[i],axis=0)})
+                frames.append(self.sess.run([self.x_hat], feed_dict=feeddict)[0])
+            frames = np.concatenate(tuple(frames))
+        else:
+            frames = self.sess.run([self.x_hat], feed_dict=feeddict)
             
         return frames
     

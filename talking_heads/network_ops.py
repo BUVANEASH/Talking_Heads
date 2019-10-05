@@ -155,10 +155,10 @@ def fully_connected(x, units, use_bias=True, is_training=True, sn=False, scope='
         
         if scope.__contains__('generator'):
             w = tf.get_variable("kernel", [channels, units], tf.float32, initializer=weight_init, 
-            					regularizer=weight_regularizer_fully, trainable=is_training)
+            					regularizer=weight_regularizer_fully)
         else :
             w = tf.get_variable("kernel", [channels, units], tf.float32, initializer=weight_init,
-            					 regularizer=None, trainable=is_training)      
+            					 regularizer=None)      
         
         if sn:
         	x = tf.matmul(x, spectral_norm(w)) 
@@ -369,30 +369,30 @@ def sigmoid(x):
 # Normalization function
 ##################################################################################
 
-#def instance_norm(x, is_training=True, scope='IN'):
-#    with tf.variable_scope(scope) :
-#        _, w, h, c = x.get_shape().as_list()
-#        epsilon = 1e-05
-#        
-#        beta  = tf.get_variable("beta", shape=[c], dtype=tf.float32, initializer=tf.constant_initializer(0.0), trainable=is_training)
-#        gamma = tf.get_variable("gamma", shape=[c], dtype=tf.float32, initializer=tf.constant_initializer(0.0), trainable=is_training)
-#               
-#        batch_mean, batch_var = tf.nn.moments(x, [1, 2])
-#
-#        x = tf.reshape(tf.transpose(x, perm = [0,3,1,2]), shape = [-1,c,w*h])
-#
-#        x = tf.nn.batch_normalization(x, 
-#                               tf.expand_dims(batch_mean, axis=-1), tf.expand_dims(batch_var, axis=-1), 
-#                               tf.expand_dims(beta, axis=-1), tf.expand_dims(gamma, axis=-1), epsilon)
-#        
-#        x = tf.transpose(tf.reshape(x, shape = [-1,c,w,h]), perm = [0,2,3,1])
-#                
-#        return x
+def instance_norm(x, is_training=True, scope='IN'):
+    with tf.variable_scope(scope) :
+        _, w, h, c = x.get_shape().as_list()
+        epsilon = 1e-05
+        
+        beta  = tf.get_variable("beta", shape=[c], dtype=tf.float32, initializer=tf.constant_initializer(0.0))
+        gamma = tf.get_variable("gamma", shape=[c], dtype=tf.float32, initializer=tf.constant_initializer(0.0))
+               
+        batch_mean, batch_var = tf.nn.moments(x, [1, 2])
+
+        x = tf.reshape(tf.transpose(x, perm = [0,3,1,2]), shape = [-1,c,w*h])
+
+        x = tf.nn.batch_normalization(x, 
+                               tf.expand_dims(batch_mean, axis=-1), tf.expand_dims(batch_var, axis=-1), 
+                               tf.expand_dims(beta, axis=-1), tf.expand_dims(gamma, axis=-1), epsilon)
+        
+        x = tf.transpose(tf.reshape(x, shape = [-1,c,w,h]), perm = [0,2,3,1])
+                
+        return x
 
         
-def instance_norm(x, is_training=True, scope='IN'):
-    epsilon = 1e-05
-    return tf.contrib.layers.instance_norm(x, epsilon = epsilon, scope = scope)
+#def instance_norm(x, is_training=True, scope='IN'):
+#    epsilon = 1e-05
+#    return tf.contrib.layers.instance_norm(x, epsilon = epsilon, scope = scope, trainable = is_training)
     
 def adaptive_instance_norm(x, z, is_training=True, scope='AdaIN'):
     with tf.variable_scope(scope) :

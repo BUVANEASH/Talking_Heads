@@ -3,7 +3,7 @@
 """
 Created on Thu Jun 27 15:28:53 2019
 
-@author: avantariml
+@author: BUVANEASH
 """
 from __future__ import print_function
 
@@ -24,6 +24,9 @@ from utils import detector, predictor, preprocess_input
 
 global face_alignment
 face_alignment = FaceAlignment(LandmarksType._2D, device='cuda')
+
+def denormalize(x):
+    return np.uint8((x+1)*127.5)
 
 def get_video_list(source = hp.dataset):
     """
@@ -177,6 +180,20 @@ def get_frame_data(frames, K = hp.K):
     y = np.expand_dims(y, axis=0) if len(y.shape) != 5 else y
     
     return x, y, tx, ty
+
+def get_input_frame_data(frames):
+            
+    ldmks = [plot_landmarks(f) for f in frames]
+           
+    tx, ty = np.float32(frames), np.float32(ldmks)
+    
+    tx = preprocess_input(tx, mode='tf')
+    ty = preprocess_input(ty, mode='tf')
+    
+    tx = np.expand_dims(tx, axis=0) if len(tx.shape) != 4 else tx
+    ty = np.expand_dims(ty, axis=0) if len(ty.shape) != 4 else ty
+        
+    return tx, ty
 
 def preprocess():
     '''

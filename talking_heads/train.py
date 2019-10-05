@@ -3,7 +3,7 @@
 """
 Created on Fri Jul  5 17:05:08 2019
 
-@author: avantariml
+@author: BUVANEASH
 """
 import os
 import argparse
@@ -53,12 +53,10 @@ def main():
     
     sess = tf.InteractiveSession(config=config)
     
-    kgan  = KGAN(sess = sess)
+    kgan  = KGAN(sess = sess, mode="train",fine_tune = args.fine)
     
     kgan.update(hp.__dict__)
-    
-    kgan.fine_tune = args.fine
-    
+        
     kgan.frames = extract_frames(args.vid) if args.fine else None
     
     if args.fine and not type(args.log) == type(None):

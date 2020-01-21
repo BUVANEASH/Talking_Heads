@@ -34,11 +34,11 @@ args.fine = False
 
 #args.fine = True
 
-args.input = '/media/new_hdd1/VoxCeleb-2/mp4/id05124/69HB1cXEoac/00075.mp4'
+args.input = '/media/new_hdd1/Face_Morp_2.0/Talking_Heads/data/AK.mp4'
 
 #args.input = '/media/new_hdd1/VoxCeleb-2/mp4/id05124/6hUV8ejPW8E/00103.mp4'
 
-args.log = '/media/new_hdd1/Face_Morp_2.0/Talking_Heads/results/model/fine'
+args.log = '/media/new_hdd1/Face_Morp_2.0/Talking_Heads/results/model/meta'
 
 args.output = '/media/new_hdd1/Face_Morp_2.0/Talking_Heads/results/output'
 
@@ -110,3 +110,6 @@ def main():
     frames = denormalize(frames)
     
     ffmpeg_images2video(frames, args.output, audio_in = None, fps = 29.97)
+
+if __name__ == '__main__':
+    main()

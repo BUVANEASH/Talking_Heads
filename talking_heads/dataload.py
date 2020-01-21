@@ -25,6 +25,22 @@ from utils import detector, predictor, preprocess_input
 global face_alignment
 face_alignment = FaceAlignment(LandmarksType._2D, device='cuda')
 
+def get_dlib(image):
+    '''
+    Extracts dlib facial land mark points from the given image
+
+    Args:
+        image (ndarray `unint8`): Input image.
+
+    Returns:
+        dlib facial land mark points.
+    '''
+    gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY) #cv2.resize(image,(0,0),fx=1/2,fy=1/2)
+    rects = detector(gray, 1)
+    shape_pts = predictor(gray,rects[0])
+    dlib_pts = face_utils.shape_to_np(shape_pts)
+    return np.array(dlib_pts, dtype=np.int32)
+
 def denormalize(x):
     return np.uint8((x+1)*127.5)
 
@@ -124,8 +140,10 @@ def plot_landmarks(frame):
     """
     data = np.ones_like(frame)*255
     
-    #landmarks = get_dlib(frame)
-    landmarks = np.int32(face_alignment.get_landmarks_from_image(frame)[0])
+    if hp.use_dlib:
+        landmarks = get_dlib(frame)
+    else:
+        landmarks = np.int32(face_alignment.get_landmarks_from_image(frame)[0])
     
     # Head
     cv2.polylines(data,[landmarks[:17, :]],False,(0,255,0),2)        
@@ -144,21 +162,6 @@ def plot_landmarks(frame):
     
     return np.array(data)
 
-def get_dlib(image):
-    '''
-    Extracts dlib facial land mark points from the given image
-
-    Args:
-        image (ndarray `unint8`): Input image.
-
-    Returns:
-        dlib facial land mark points.
-    '''
-    gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY) #cv2.resize(image,(0,0),fx=1/2,fy=1/2)
-    rects = detector(gray, 1)
-    shape_pts = predictor(gray,rects[0])
-    dlib_pts = face_utils.shape_to_np(shape_pts)
-    return np.array(dlib_pts, dtype=np.int32)
 
 def get_frame_data(frames, K = hp.K):
     K_plus_frames = select_random_frames(frames, K = hp.K)

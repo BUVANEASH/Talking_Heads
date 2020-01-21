@@ -8,13 +8,14 @@ from ast import literal_eval
 class hyperparameters():
 
     def __init__(self):        
+        self.use_dlib = True
         # Dataset
         self.dataset = "/media/new_hdd1/VoxCeleb-2/Video/dev/mp4"
         self.data = "/media/new_hdd1/Face_Morp_2.0/Talking_Heads/data"
         self.preprocessed = os.path.join(self.data,"preprocessed")
         
         # logdir
-        self.model = "fine"
+        self.model = "AK"
         self.modeldir = "/media/new_hdd1/Face_Morp_2.0/Talking_Heads/results/model/"
         self.logdir = os.path.join(self.modeldir, "meta")
         self.fine_logdir = os.path.join(self.modeldir, self.model)
@@ -55,7 +56,7 @@ class hyperparameters():
         self.img_size = (256, 256, 3)
         
         # K-shot learning,
-        self.K = 8
+        self.K = 8#8
 
         # batch size
         self.batch = 1

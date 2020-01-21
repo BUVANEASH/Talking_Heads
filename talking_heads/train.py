@@ -54,18 +54,26 @@ def main():
     sess = tf.InteractiveSession(config=config)
     
     kgan  = KGAN(sess = sess, mode="train",fine_tune = args.fine)
+
+    if not type(args.log) == type(None):
+      hp.modeldir = args.log
+
+    
     
     kgan.update(hp.__dict__)
         
     kgan.frames = extract_frames(args.vid) if args.fine else None
     
-    if args.fine and not type(args.log) == type(None):
-        os.makedirs(args.log, exist_ok=True)
-        kgan.fine_logdir = args.log
-    elif not type(args.log) == type(None):
-        os.makedirs(args.log, exist_ok=True)
-        kgan.logdir = args.log
-        
+    # if args.fine and not type(args.log) == type(None):
+    #     kgan.fine_logdir = args.log
+    # elif not type(args.log) == type(None):
+    #     kgan.logdir = args.log
+    
+    if args.fine: 
+      os.makedirs(kgan.fine_logdir, exist_ok=True)
+    else:
+      os.makedirs(kgan.logdir, exist_ok=True)
+
     kgan.build()
     
     kgan.train()

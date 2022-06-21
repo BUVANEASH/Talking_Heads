@@ -1,6 +1,6 @@
 tqdm==4.31.1
 tensorflow==1.13.1
-numpy==1.16.3
+numpy==1.22.0
 Keras_Applications==1.0.7
 Keras==2.2.4
 dlib==19.18.0
